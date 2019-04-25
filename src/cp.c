@@ -10,6 +10,8 @@
 #include <libgen.h>
 #include <stdbool.h>
 #include <string.h>
+#include <dirent.h>
+#include <ctype.h>
 
 #define MAX_BUF_SIZE 1024
 
@@ -17,6 +19,7 @@ bool verbose = false;
 bool no_clobber = false;
 bool update = false;
 bool interactive = false;
+bool recursion = false;
 
 /* copy
  * this is the main function where the actual copying occurs
@@ -54,11 +57,6 @@ void copy(char *source, char *destination, struct stat src_stat) {
 void copy_aux(int argc, char *argv[]) {
     struct stat src_stat, dst_stat;
     bool is_dir = false;
-    /* currently unused functions
-    char *src_path = dirname(source);
-    char *dst_path = dirname(destination);
-    char *dst_filename = basename(destination);
-    */
     /* check if destination is a directory */
     if (lstat(argv[argc - 1], &dst_stat) == -1) {
         /* file may not exist */
@@ -77,44 +75,84 @@ void copy_aux(int argc, char *argv[]) {
             error(EXIT_FAILURE, errno, "failed to stat '%s'", source);
         if (src_stat.st_mode & S_IFDIR) {
             if (verbose) printf("%s is a directory\n", source);
-            /* TODO: do recursion here */
+            /* do recursion here */
+            if (recursion) {
+                if (verbose) printf("doing recursion on %s\n", source);
+                DIR *src_dir;
+                struct dirent *src_dirent;
+                src_dir = opendir(source);
+                if (src_dir == NULL)
+                    error(EXIT_FAILURE, errno, "failed to open '%s'", source);
+                while ((src_dirent = readdir(src_dir)) != NULL) {
+                    char *arg[2];
+                    char *filename = src_dirent->d_name;
+                    if (strcmp(filename, ".") == 0) continue;
+                    if (strcmp(filename, "..") == 0) continue;
+                    char path[strlen(source) + 1 + strlen(filename)];
+                    char *slash = (source[strlen(source) - 1] == '/') ? "" : "/";
+                    strcpy(path, source);
+                    strcat(path, slash);
+                    strcat(path, filename);
+                    arg[0] = path;
+                    arg[1] = argv[argc - 1];
+                    copy_aux(2, arg);
+                }
+                continue;
+            }
+            else {
+                error(EXIT_FAILURE, errno, "'%s' is a directory", source);
+            }
         }
         if (is_dir) {
             char *src_filename = basename(source);
-            char path[sizeof(argv[argc - 1]) + 1 + sizeof(src_filename)];
-            strcpy(path, argv[argc - 1]);
-            strcat(path, "/");
+            char *dir_name = argv[argc - 1];
+            char path[strlen(dir_name) + 1 + strlen(src_filename)];
+            char *slash = (dir_name[strlen(dir_name) - 1] == '/') ? "" : "/";
+            strcpy(path, dir_name);
+            strcat(path, slash);
             strcat(path, src_filename);
-            destination = path;
+            destination = strdup(path);
         }
         else {
-            destination = argv[argc - 1];
+            destination = strdup(argv[argc - 1]);
         }
+        if (destination == NULL)
+            error(EXIT_FAILURE, errno, "malloc() failed");
         if (lstat(destination, &dst_stat) == -1) {
             /* file may not exist */
             //error(EXIT_FAILURE, errno, "failed to stat '%s'", destination);
         }
         else if (interactive) {
             if (verbose) printf("%s exists, switching to interactive mode\n", destination);
-            printf("overwrite %s? (y/n)\n", destination);
-            char c = getc(stdin);
-            if (c != 'y') { /* assume 'n' for any other input */
+            char c = 0;
+            while (c != 'y' && c != 'n') {
+                printf("overwrite %s? (y/N)\n", destination);
+                c = tolower(getchar());
+                if (c == '\n') break;
+                /* flush the buffer for stdin; this prevents errors on subsequent getc calls */
+                while (getchar() != '\n');
+            }
+            if (c == 'n' || c == '\n') {
                 if (verbose) printf("user chose not to overwrite %s, skipping\n", destination);
+                free(destination);
                 continue;
             }
         }
         else if (no_clobber) {
             if (verbose) printf("%s exists, will not clobber\n", destination);
+            free(destination);
             continue;
         }
         else if (update) {
             if (src_stat.st_mtime <= dst_stat.st_mtime) {
                 if (verbose) printf("%s exists and is newer than %s), skipping\n", destination, source);
+                free(destination);
                 continue;
             }
         }
         if (verbose) printf("copying %s to %s\n", source, destination);
         copy(source, destination, src_stat);
+        free(destination);
     }
 }
 
@@ -124,7 +162,8 @@ int main(int argc, char *argv[]) {
     while ((opt = getopt(argc, argv, "Rrniulv")) != -1) {
         switch (opt) {
             case 'R':
-            case 'r': /* TODO */
+            case 'r': /* TODO: create directories */
+                recursion = true;
                 if (verbose) printf("Recursion\n");
                 break;
             case 'n':
