@@ -1,4 +1,4 @@
-CFLAGS=-g -std=c99 -Wall -pedantic -pthread
+CFLAGS=-g -std=c99 -Wall -pedantic
 
 TARGET = cp
 
