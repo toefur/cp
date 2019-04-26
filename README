@@ -1,0 +1,20 @@
+cp
+
+Author:
+    Chris Reed       <chris@toefur.net>
+
+Description:
+    A simple implementation of the unix 'cp' command.
+    This implementation offers many of the most common features in the 'cp' program.
+
+Build:
+    make
+
+Run:
+    ./bin/cp [-fhilnRrsuv] SOURCE... DESTINATION
+
+Files:
+    Makefile        used for building
+    README          this file
+    cp.c            source code for our implementation of 'cp'
+    cp.h            header

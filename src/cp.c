@@ -1,3 +1,13 @@
+/* cp
+ *
+ * Authors:
+ *     Paige Ignatovich <paige.ignatovich@wsu.edu>
+ *     Chris Reed       <christopher.j.reed@wsu.edu>
+ *
+ * Description:
+ *     A simple implementation of the linux 'cp' command.
+ *     This implementation offers many of the most common features in the 'cp' program.
+ */
 #define  _DEFAULT_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,8 +22,6 @@
 #include <dirent.h>
 #include <ctype.h>
 #include "cp.h"
-
-#define MAX_BUF_SIZE 1024
 
 /* copy():
  * this is the main function where the actual copying occurs
@@ -53,7 +61,7 @@ void copy(char *source, char *destination, struct stat src_stat, struct flags fl
 }
 
 /* do_recursion():
- * this helper function will handle walking through directories  to copy files
+ * this helper function will handle walking through directories to copy files
  * when the recursion flag is set
  */
 void do_recursion(char *source, char *destination, struct flags flags) {
@@ -176,7 +184,7 @@ void copy_aux(int argc, char *argv[], struct flags flags) {
         }
         else if (flags.update) {
             if (src_stat.st_mtime <= dst_stat.st_mtime) {
-                if (flags.verbose) printf("%s exists and is newer than %s), skipping\n", destination, source);
+                if (flags.verbose) printf("%s exists and is newer than %s, skipping\n", destination, source);
                 free(destination);
                 continue;
             }
@@ -206,6 +214,10 @@ int main(int argc, char *argv[]) {
                 flags.force = true;
                 if (flags.verbose) printf(", force");
                 break;
+            case 'h':
+                if (flags.verbose) printf("...skippiing to help\n");
+                printf(HELP_MSG, argv[0], CP_OPTS);
+                exit(EXIT_SUCCESS);
             case 'i':
                 flags.interactive = true;
                 if (flags.verbose) printf(", interactive");
@@ -236,14 +248,14 @@ int main(int argc, char *argv[]) {
                 if (flags.verbose) printf("using flags: verbose");
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-%s] SOURCE DESTINATION\n", argv[0], CP_OPTS);
+                fprintf(stderr, USAGE_MSG, argv[0], CP_OPTS);
                 exit(EXIT_FAILURE);
         }
     }
     if (flags.verbose) printf("\n");
 
     if ((argc - optind) < 2) {
-        fprintf(stderr, "Usage: %s [-Rrniulv] SOURCE DESTINATION\n", argv[0]);
+        fprintf(stderr, USAGE_MSG, argv[0], CP_OPTS);
         exit(EXIT_FAILURE);
     }
 
