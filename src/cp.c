@@ -8,24 +8,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <libgen.h>
-#include <stdbool.h>
 #include <string.h>
 #include <dirent.h>
 #include <ctype.h>
+#include "cp.h"
 
 #define MAX_BUF_SIZE 1024
 
-bool verbose = false;
-bool no_clobber = false;
-bool update = false;
-bool interactive = false;
-bool recursion = false;
-
-/* copy
+/* copy():
  * this is the main function where the actual copying occurs
  * src and dst are file descriptors used when opening files
- * xxxpath refers to the path of the files
- * xxxfilename is the name of the files without path
  */
 void copy(char *source, char *destination, struct stat src_stat) {
     /* check if source is a directory */
@@ -54,7 +46,60 @@ void copy(char *source, char *destination, struct stat src_stat) {
         error(EXIT_FAILURE, errno, "failed to close '%s'", destination);
 }
 
-void copy_aux(int argc, char *argv[]) {
+/* do_recursion():
+ * this helper function will handle walking through directories  to copy files
+ * when the recursion flag is set
+ */
+void do_recursion(char *source, char *destination, struct flags flags) {
+    if (flags.verbose) printf("doing recursion on %s to %s\n", source, destination);
+    DIR *src_dir;
+    struct dirent *src_dirent;
+    struct stat src_stat, dst_stat;
+    if (lstat(source, &src_stat) == -1) {
+        error(EXIT_FAILURE, errno, "failed to stat '%s'", source);
+    }
+    if (lstat(destination, &dst_stat) == -1) {
+        if (mkdir(destination, src_stat.st_mode) == -1)
+            error(EXIT_FAILURE, errno, "failed to make directory '%s'", destination);
+    }
+    src_dir = opendir(source);
+    if (src_dir == NULL)
+        error(EXIT_FAILURE, errno, "failed to open '%s'", source);
+    while ((src_dirent = readdir(src_dir)) != NULL) {
+        char *arg[2];
+        char *filename = src_dirent->d_name;
+        if (strcmp(filename, ".") == 0) continue;
+        if (strcmp(filename, "..") == 0) continue;
+        char path[strlen(source) + 1 + strlen(filename)];
+        char *slash = (source[strlen(source) - 1] == '/') ? "" : "/";
+        struct stat ent_stat;
+        strcpy(path, source);
+        strcat(path, slash);
+        strcat(path, filename);
+        if (lstat(path, &ent_stat) == -1) {
+            error(EXIT_FAILURE, errno, "failed to stat '%s'", path);
+        }
+        if (S_ISDIR(ent_stat.st_mode)) {
+            char dst_path[strlen(destination) + 1 + strlen(filename)];
+            slash = (source[strlen(source) - 1] == '/') ? "" : "/";
+            strcpy(dst_path, destination);
+            strcat(dst_path, slash);
+            strcat(dst_path, filename);
+            do_recursion(path, dst_path, flags);
+        }
+        else {
+            arg[0] = path;
+            arg[1] = destination;
+            copy_aux(2, arg, flags);
+        }
+    }
+}
+
+/* copy_aux():
+ * this helper function will check if files exists and change behavior based
+ * on the flags provided
+ */
+void copy_aux(int argc, char *argv[], struct flags flags) {
     struct stat src_stat, dst_stat;
     bool is_dir = false;
     /* check if destination is a directory */
@@ -63,8 +108,8 @@ void copy_aux(int argc, char *argv[]) {
         //error(EXIT_FAILURE, errno, "failed to stat '%s'", destination);
     }
     else {
-        if (dst_stat.st_mode & S_IFDIR) {
-            if (verbose) printf("%s is a directory\n", argv[argc - 1]);
+        if (S_ISDIR(dst_stat.st_mode)) {
+            if (flags.verbose) printf("%s is a directory\n", argv[argc - 1]);
             is_dir = true;
         }
     }
@@ -73,30 +118,11 @@ void copy_aux(int argc, char *argv[]) {
         char *destination;
         if (lstat(source, &src_stat) == -1)
             error(EXIT_FAILURE, errno, "failed to stat '%s'", source);
-        if (src_stat.st_mode & S_IFDIR) {
-            if (verbose) printf("%s is a directory\n", source);
+        if (S_ISDIR(src_stat.st_mode)) {
+            if (flags.verbose) printf("%s is a directory\n", source);
             /* do recursion here */
-            if (recursion) {
-                if (verbose) printf("doing recursion on %s\n", source);
-                DIR *src_dir;
-                struct dirent *src_dirent;
-                src_dir = opendir(source);
-                if (src_dir == NULL)
-                    error(EXIT_FAILURE, errno, "failed to open '%s'", source);
-                while ((src_dirent = readdir(src_dir)) != NULL) {
-                    char *arg[2];
-                    char *filename = src_dirent->d_name;
-                    if (strcmp(filename, ".") == 0) continue;
-                    if (strcmp(filename, "..") == 0) continue;
-                    char path[strlen(source) + 1 + strlen(filename)];
-                    char *slash = (source[strlen(source) - 1] == '/') ? "" : "/";
-                    strcpy(path, source);
-                    strcat(path, slash);
-                    strcat(path, filename);
-                    arg[0] = path;
-                    arg[1] = argv[argc - 1];
-                    copy_aux(2, arg);
-                }
+            if (flags.recursion) {
+                do_recursion(source, argv[argc - 1], flags);
                 continue;
             }
             else {
@@ -119,11 +145,10 @@ void copy_aux(int argc, char *argv[]) {
         if (destination == NULL)
             error(EXIT_FAILURE, errno, "malloc() failed");
         if (lstat(destination, &dst_stat) == -1) {
-            /* file may not exist */
-            //error(EXIT_FAILURE, errno, "failed to stat '%s'", destination);
+            /* file does not exist */
         }
-        else if (interactive) {
-            if (verbose) printf("%s exists, switching to interactive mode\n", destination);
+        else if (flags.interactive) {
+            if (flags.verbose) printf("%s exists, switching to interactive mode\n", destination);
             char c = 0;
             while (c != 'y' && c != 'n') {
                 printf("overwrite %s? (y/N)\n", destination);
@@ -133,57 +158,64 @@ void copy_aux(int argc, char *argv[]) {
                 while (getchar() != '\n');
             }
             if (c == 'n' || c == '\n') {
-                if (verbose) printf("user chose not to overwrite %s, skipping\n", destination);
+                if (flags.verbose) printf("user chose not to overwrite %s, skipping\n", destination);
                 free(destination);
                 continue;
             }
         }
-        else if (no_clobber) {
-            if (verbose) printf("%s exists, will not clobber\n", destination);
+        else if (flags.no_clobber) {
+            if (flags.verbose) printf("%s exists, will not clobber\n", destination);
             free(destination);
             continue;
         }
-        else if (update) {
+        else if (flags.update) {
             if (src_stat.st_mtime <= dst_stat.st_mtime) {
-                if (verbose) printf("%s exists and is newer than %s), skipping\n", destination, source);
+                if (flags.verbose) printf("%s exists and is newer than %s), skipping\n", destination, source);
                 free(destination);
                 continue;
             }
         }
-        if (verbose) printf("copying %s to %s\n", source, destination);
-        copy(source, destination, src_stat);
+        if (flags.verbose) printf("copying %s to %s\n", source, destination);
+        if (flags.hard_link) {
+            if (link(source, destination) == -1)
+                error(EXIT_FAILURE, errno, "cannot link '%s' to '%s'", source, destination);
+        }
+        else
+            copy(source, destination, src_stat);
         free(destination);
     }
 }
 
 int main(int argc, char *argv[]) {
+    struct flags flags= {false, false, false, false, false, false};
     int opt;
 
     while ((opt = getopt(argc, argv, "Rrniulv")) != -1) {
         switch (opt) {
             case 'R':
-            case 'r': /* TODO: create directories */
-                recursion = true;
-                if (verbose) printf("Recursion\n");
+            case 'r':
+                flags.recursion = true;
+                if (flags.verbose) printf("Recursion\n");
                 break;
             case 'n':
-                no_clobber = true;
-                if (verbose) printf("No Clobber\n");
+                flags.no_clobber = true;
+                if (flags.verbose) printf("No Clobber\n");
                 break;
             case 'i':
-                interactive = true;
-                if (verbose) printf("Interactive\n");
+                flags.interactive = true;
+                if (flags.verbose) printf("Interactive\n");
                 break;
             case 'u':
-                update = true;
-                if (verbose) printf("Update\n");
+                flags.update = true;
+                if (flags.verbose) printf("Update\n");
                 break;
-            case 'l': /* TODO */
-                if (verbose) printf("Hard Link\n");
+            case 'l':
+                flags.hard_link = true;
+                if (flags.verbose) printf("Hard Link\n");
                 break;
             case 'v':
-                verbose = true;
-                if (verbose) printf("Verbose\n");
+                flags.verbose = true;
+                if (flags.verbose) printf("Verbose\n");
                 break;
             default:
                 fprintf(stderr, "Usage: %s [-Rrniulv] SOURCE DESTINATION\n", argv[0]);
@@ -191,13 +223,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    //printf("argc:%i, optind:%i\n", argc, optind);
-
     if ((argc - optind) < 2) {
         fprintf(stderr, "Usage: %s [-Rrniulv] SOURCE DESTINATION\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
     /* allow for multiple source files */
-    copy_aux(argc - optind, argv + optind);
+    copy_aux(argc - optind, argv + optind, flags);
 }
