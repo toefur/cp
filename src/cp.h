@@ -3,13 +3,17 @@
 
 #include <stdbool.h>
 
+#define CP_OPTS "filnRrsuv"
+
 struct flags {
-    bool verbose;
-    bool no_clobber;
-    bool update;
+    bool force;
     bool interactive;
+    bool link;
+    bool no_clobber;
     bool recursion;
-    bool hard_link;
+    bool symlink;
+    bool update;
+    bool verbose;
 };
 
 void copy_aux(int argc, char *argv[], struct flags flags);

@@ -19,7 +19,7 @@
  * this is the main function where the actual copying occurs
  * src and dst are file descriptors used when opening files
  */
-void copy(char *source, char *destination, struct stat src_stat) {
+void copy(char *source, char *destination, struct stat src_stat, struct flags flags) {
     /* check if source is a directory */
     int src, dst;
     int numbytesread;
@@ -29,13 +29,19 @@ void copy(char *source, char *destination, struct stat src_stat) {
         error(EXIT_FAILURE, errno, "failed to open '%s'", source);
     /* open/check destination (O_WRONLY, O_CREATE, O_TRUNC) */
     /* match permissions */
-    if ((dst = open(destination, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode)) == -1)
-        error(EXIT_FAILURE, errno, "failed to open '%s'", destination);
+    if ((dst = open(destination, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode)) == -1) {
+        if (flags.force) {
+            if (flags.verbose) printf("failed to open %s, removing then trying again\n", destination);
+            if (remove(destination) == -1)
+                error(EXIT_FAILURE, errno, "failed to remove '%s'", destination);
+            if ((dst = open(destination, O_WRONLY | O_CREAT | O_TRUNC, src_stat.st_mode)) == -1)
+                error(EXIT_FAILURE, errno, "failed to open '%s'", destination);
+        }
+    }
     /* read from source, write to destination */
     while ((numbytesread = read(src, buf, MAX_BUF_SIZE)) > 0) {
-        if (write(dst, buf, numbytesread) != numbytesread) {
+        if (write(dst, buf, numbytesread) != numbytesread)
             error(EXIT_FAILURE, errno, "error writing '%s'", source);
-        }
     }
     if (numbytesread == -1)
         error(EXIT_FAILURE, errno, "error reading '%s'", source);
@@ -176,52 +182,65 @@ void copy_aux(int argc, char *argv[], struct flags flags) {
             }
         }
         if (flags.verbose) printf("copying %s to %s\n", source, destination);
-        if (flags.hard_link) {
+        if (flags.link) {
             if (link(source, destination) == -1)
                 error(EXIT_FAILURE, errno, "cannot link '%s' to '%s'", source, destination);
         }
+        else if (flags.symlink) {
+            if (symlink(source, destination) == -1)
+                error(EXIT_FAILURE, errno, "cannot symlink '%s' to '%s'", source, destination);
+        }
         else
-            copy(source, destination, src_stat);
+            copy(source, destination, src_stat, flags);
         free(destination);
     }
 }
 
 int main(int argc, char *argv[]) {
-    struct flags flags= {false, false, false, false, false, false};
+    struct flags flags = {0};
     int opt;
 
-    while ((opt = getopt(argc, argv, "Rrniulv")) != -1) {
+    while ((opt = getopt(argc, argv, CP_OPTS)) != -1) {
         switch (opt) {
-            case 'R':
-            case 'r':
-                flags.recursion = true;
-                if (flags.verbose) printf("Recursion\n");
-                break;
-            case 'n':
-                flags.no_clobber = true;
-                if (flags.verbose) printf("No Clobber\n");
+            case 'f':
+                flags.force = true;
+                if (flags.verbose) printf(", force");
                 break;
             case 'i':
                 flags.interactive = true;
-                if (flags.verbose) printf("Interactive\n");
+                if (flags.verbose) printf(", interactive");
+                break;
+            case 'l':
+                flags.link = true;
+                if (flags.verbose) printf(", hard link");
+                break;
+            case 'n':
+                flags.no_clobber = true;
+                if (flags.verbose) printf(", no Clobber");
+                break;
+            case 'R':
+            case 'r':
+                flags.recursion = true;
+                if (flags.verbose) printf(", recursion");
+                break;
+            case 's':
+                flags.symlink = true;
+                if (flags.verbose) printf(", symlink");
                 break;
             case 'u':
                 flags.update = true;
-                if (flags.verbose) printf("Update\n");
-                break;
-            case 'l':
-                flags.hard_link = true;
-                if (flags.verbose) printf("Hard Link\n");
+                if (flags.verbose) printf(", update");
                 break;
             case 'v':
                 flags.verbose = true;
-                if (flags.verbose) printf("Verbose\n");
+                if (flags.verbose) printf("using flags: verbose");
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-Rrniulv] SOURCE DESTINATION\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-%s] SOURCE DESTINATION\n", argv[0], CP_OPTS);
                 exit(EXIT_FAILURE);
         }
     }
+    if (flags.verbose) printf("\n");
 
     if ((argc - optind) < 2) {
         fprintf(stderr, "Usage: %s [-Rrniulv] SOURCE DESTINATION\n", argv[0]);

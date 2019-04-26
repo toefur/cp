@@ -17,7 +17,7 @@ $(BINDIR)/$(TARGET): $(OBJECTS)
 	gcc $(CFLAGS) $(OBJECTS) -o $@
 
 # build objects and store them in obj/
-$(OBJECTS): $(OBJDIR)/%.o : $(SRCDIR)/%.c
+$(OBJECTS): $(OBJDIR)/%.o : $(SRCDIR)/%.c $(INCLUDES)
 	gcc $(CFLAGS) -c $< -o $@
 
 # clean out the object files
